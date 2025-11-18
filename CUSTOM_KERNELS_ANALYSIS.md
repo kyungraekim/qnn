@@ -92,15 +92,19 @@ struct InferenceStep {
 };
 ```
 
-**KV Update Methods** (nsp-model.cpp:639-645):
+**KV Update Methods** (QnnApi.hpp:36-41):
 ```cpp
 enum class KVManagerMode {
+  POINTER_SHIFT = 0x0,  // Deprecated
   SHIFT_CONCAT  = 0x1,  // Deprecated
   SMART_MASK    = 0x2,  // Intelligent masking (default)
-  NATIVE_KV     = 0x3,  // HMX native layout for hardware acceleration
-  POINTER_SHIFT = 0x4   // Deprecated
+  NATIVE_KV     = 0x3   // HMX native layout for hardware acceleration
 };
 ```
+
+**Usage** (nsp-model.hpp:105-106, nsp-model.cpp:106, nsp-model.cpp:350):
+- Defaults to `SMART_MASK` mode
+- Switches to `NATIVE_KV` when `QNN_TENSOR_DATA_FORMAT_HMX_WEIGHT_LAYOUT` is detected
 
 ### 2.2 Context Management Strategies
 
@@ -531,7 +535,7 @@ for (size_t j = 0; j < n_valid_kv; j++) {
 
 ### 6.2 Supported Operations
 
-**File:** `include/QNN/QnnOpDef.h` (800+ lines)
+**File:** `include/QNN/QnnOpDef.h` (742 lines)
 
 **Key Transformer Operations:**
 
@@ -557,38 +561,68 @@ for (size_t j = 0; j < n_valid_kv; j++) {
 
 ### 7.1 Vectorized Causal Attention Mask
 
-**File:** `examples/Genie/Genie/src/qualla/engines/qnn-htp/attention-mask.cpp`
+**File:** `examples/Genie/Genie/src/qualla/engines/qnn-htp/attention-mask.cpp` (Lines 114-152)
 
+**Function Signature** (attention-mask.hpp:64-70):
 ```cpp
-template <typename T>
-void AttentionMask::fillAttentionRow(
-    const std::vector<bool>& attention_row,
-    T* attention_buffer,
-    uint32_t query_token_idx) const
-{
-    const T pos_val = 1;
-    const uint32_t past_idx = m_kvmanager.m_n_past_idx;
-    const uint32_t new_idx = m_kvmanager.m_n_new_idx;
-    const uint32_t n_past = m_kvmanager.n_past();
-    const uint32_t n_valid_kv = m_kvmanager.n_valid_kv();
+template <typename DType>
+bool fillAttentionRow(std::span<DType> attention_buffer,
+                      const size_t query_token_idx,
+                      const size_t n_past,
+                      const size_t n_valid_kv,
+                      const size_t past_idx,
+                      const size_t new_idx,
+                      const DType pos_val) const;
+```
+
+**Implementation Excerpt** (attention-mask.cpp:114-152):
+```cpp
+template <typename DType>
+bool AttentionMask::fillAttentionRow(std::span<DType> attention_buffer,
+                                     const size_t query_token_idx,
+                                     const size_t n_past,
+                                     const size_t n_valid_kv,
+                                     const size_t past_idx,
+                                     const size_t new_idx,
+                                     const DType pos_val) const {
+  if (m_attention_mode == AttentionMode::CUSTOM) {
+    // For fully-specified/2D attn masks, directly iterate on the provided mask
+    const size_t row_size  = m_n_past + m_n_inputs;
+    const size_t query_idx = (n_past - m_n_past) + query_token_idx;
+    auto attention_row = std::span<const int32_t>(&m_attention_map[query_idx * row_size], row_size);
 
     // Vectorized fill for past KV cache
     PRAGMA_LOOP_VECTORIZE
     for (size_t j = 0; j < n_valid_kv; j++) {
-        if (attention_row[n_past - n_valid_kv + j]) {
-            attention_buffer[past_idx + j] = pos_val;
-        }
+      if (attention_row[n_past - n_valid_kv + j]) {
+        attention_buffer[past_idx + j] = pos_val;
+      }
     }
 
     // Vectorized fill for new tokens (causal)
     PRAGMA_LOOP_VECTORIZE
     for (size_t j = 0; j <= query_token_idx; j++) {
-        if (attention_row[n_past + j]) {
-            attention_buffer[new_idx + j] = pos_val;
-        }
+      if (attention_row[n_past + j]) {
+        attention_buffer[new_idx + j] = pos_val;
+      }
     }
+  } else {
+    // For 1D or empty attention masks, use AttentionSpans
+    for (const auto& span :
+         getAttentionSpans(n_past - m_n_past, query_token_idx, n_valid_kv, past_idx, new_idx)) {
+      std::fill_n(&attention_buffer[span.start], span.length, pos_val);
+    }
+  }
+
+  return true;
 }
 ```
+
+**Key Features:**
+- Uses `std::span<DType>` for flexible data type support (uint8/16/32, float16/32)
+- All parameters passed as function arguments (no member access)
+- Supports CUSTOM mode (2D masks) and span-based modes (CAUSAL, RELATIONAL)
+- `PRAGMA_LOOP_VECTORIZE` enables compiler auto-vectorization to HVX instructions
 
 ### 7.2 HVX L2 Cache Prefetch
 
@@ -706,7 +740,7 @@ std::vector<GpuKVCache> _kvCache;
 | `examples/Genie/Genie/src/AUTOREGRESSIVE_TEXT_GENERATION.md` | 1216 | LLM inference documentation |
 | `examples/QNN/OpPackage/HTP/ExampleOpPackageRelu.cpp` | 438 | HVX ReLU reference |
 | `examples/QNN/OpPackage/HTP/ExampleOpPackageMaxPool.cpp` | 400+ | HVX MaxPool reference |
-| `include/QNN/QnnOpDef.h` | 800+ | QNN operation definitions |
+| `include/QNN/QnnOpDef.h` | 742 | QNN operation definitions |
 
 ### 10.2 Configuration Files
 
