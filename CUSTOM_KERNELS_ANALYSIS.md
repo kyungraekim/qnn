@@ -561,21 +561,11 @@ for (size_t j = 0; j < n_valid_kv; j++) {
 
 ### 7.1 Vectorized Causal Attention Mask
 
-**File:** `examples/Genie/Genie/src/qualla/engines/qnn-htp/attention-mask.cpp` (Lines 114-152)
+**Location:** `examples/Genie/Genie/src/qualla/engines/qnn-htp/attention-mask.cpp` (Lines 114-152)
 
-**Function Signature** (attention-mask.hpp:64-70):
-```cpp
-template <typename DType>
-bool fillAttentionRow(std::span<DType> attention_buffer,
-                      const size_t query_token_idx,
-                      const size_t n_past,
-                      const size_t n_valid_kv,
-                      const size_t past_idx,
-                      const size_t new_idx,
-                      const DType pos_val) const;
-```
+**Note:** This example shows the actual current implementation from the codebase. The function uses modern C++ features (`std::span<DType>`) and all parameters are passed as function arguments (no member variable access like `m_kvmanager`).
 
-**Implementation Excerpt** (attention-mask.cpp:114-152):
+**Complete Implementation**
 ```cpp
 template <typename DType>
 bool AttentionMask::fillAttentionRow(std::span<DType> attention_buffer,
