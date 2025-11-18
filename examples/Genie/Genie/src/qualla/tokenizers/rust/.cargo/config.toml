@@ -1,0 +1,12 @@
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-args=/guard:cf /DYNAMICBASE /CETCOMPAT"]
+
+[source.crates-io]
+replace-with = "local-registry"
+
+[source.local-registry]
+directory = "../../../../../../../../../ThirdParty/rust_deps/src"
+
+[patch.crates-io]
+monostate-impl = { path = "../../../../../../../../../ThirdParty/rust_deps/src/monostate-impl-0.1.14" }
+monostate = { path = "../../../../../../../../../ThirdParty/rust_deps/src/monostate-0.1.14" }
